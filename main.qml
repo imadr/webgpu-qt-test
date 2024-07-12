@@ -1,18 +1,37 @@
 import QtQuick 2.0
 import QtQuick.Controls 1.0
 
-ApplicationWindow
-{
+ApplicationWindow {
     visible: true
-    width: 640
-    height: 480
+    width: 800
+    height: 800
     title: qsTr("webgpu-qt-test")
 
-    Button {
-        text: qsTr("Click Me")
+    Column {
         anchors.centerIn: parent
-        onClicked: {
-            console.log("Button clicked!")
+
+        Button {
+            text: qsTr("Click Me")
+            onClicked: {
+                console.log("Button clicked!")
+            }
+        }
+
+        Image {
+            id: dynamicImage
+            width: 700
+            height: 700
+            source: "image://canvastexture/texture"
+            sourceSize: Qt.size(700, 700)
+
+            Connections {
+                target: textureProvider
+                function onTextureUpdated() {
+                    dynamicImage.source = "";
+                    dynamicImage.source = "image://canvastexture/texture"
+                    dynamicImage.sourceSize = Qt.size(640, 480)
+                }
+            }
         }
     }
 }
