@@ -1,81 +1,205 @@
+#include <QtQuick/qquickwindow.h>
+
 #include <QApplication>
 #include <QGuiApplication>
 #include <QImage>
 #include <QMutex>
 #include <QObject>
+#include <QOpenGLFunctions>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickImageProvider>
+#include <QQuickItem>
+#include <QRunnable>
 #include <QTimer>
+#include <QtGui/QOpenGLContext>
+#include <QtGui/QOpenGLShaderProgram>
+#include <QtGui/QOpenGLTexture>
 
-class TextureProvider : public QObject, public QQuickImageProvider {
+class TextureCanvasRenderer : public QObject, protected QOpenGLFunctions {
     Q_OBJECT
    public:
-    TextureProvider() : QQuickImageProvider(QQuickImageProvider::Image) {
+    TextureCanvasRenderer() : m_t(0), m_program(0) {
+    }
+    ~TextureCanvasRenderer() {
+        delete m_program;
     }
 
-    QImage requestImage(const QString &id, QSize *size, const QSize &requestedSize) override {
-        if (size) *size = m_image.size();
-        return m_image;
+    void setT(qreal t) {
+        m_t = t;
+    }
+    void setViewportSize(const QSize &size) {
+        m_viewportSize = size;
+    }
+    void setWindow(QQuickWindow *window) {
+        m_window = window;
     }
 
-    void updateTexture(const QImage &image) {
-        m_image = image;
-        emit textureUpdated();
-    }
-
-    void updateTextureFromBytes(const QByteArray &bytes, int width, int height) {
-        QImage image(reinterpret_cast<const uchar *>(bytes.constData()), width, height,
-                     QImage::Format_RGB32);
-        if (image.isNull()) {
-            qWarning() << "Failed to create QImage from bytes";
-            return;
+    void updateTextureData() {
+        if (m_texture != NULL) {
+            m_texture->destroy();
+            m_texture = NULL;
         }
+        if (!m_image->isNull()) {
+            m_texture = new QOpenGLTexture(m_image->mirrored());
+            m_texture->setMinificationFilter(QOpenGLTexture::LinearMipMapLinear);
+            m_texture->setMagnificationFilter(QOpenGLTexture::Linear);
+            m_texture->setWrapMode(QOpenGLTexture::Repeat);
+        }
+    }
 
-        m_image = image;
-        emit textureUpdated();
+   public slots:
+    void init() {
+        if (!m_program) {
+            QSGRendererInterface *rif = m_window->rendererInterface();
+            Q_ASSERT(rif->graphicsApi() == QSGRendererInterface::OpenGL ||
+                     rif->graphicsApi() == QSGRendererInterface::OpenGLRhi);
+
+            initializeOpenGLFunctions();
+
+            m_program = new QOpenGLShaderProgram();
+            m_program->addCacheableShaderFromSourceCode(
+                QOpenGLShader::Vertex,
+                "varying highp vec2 coords;"
+                "void main() {"
+                "vec3 position = vec3(vec2(gl_VertexID % 2, gl_VertexID / 2) * 4.0 - 1.0, 0.0);"
+                "coords = (position.xy + 1.0) * 0.5;"
+                "gl_Position = vec4(position, 1.0);"
+                "}");
+            m_program->addCacheableShaderFromSourceCode(
+                QOpenGLShader::Fragment,
+                "uniform lowp float t;"
+                "uniform sampler2D texture;"
+                "varying highp vec2 coords;"
+                "void main() {"
+                "    gl_FragColor = texture2D(texture, coords);"
+                "}");
+
+            m_program->link();
+
+            m_image = new QImage(256, 256, QImage::Format_RGBA8888);
+            m_image->fill(Qt::red);
+            updateTextureData();
+        }
+    }
+    void paint() {
+        m_window->beginExternalCommands();
+
+        m_program->bind();
+
+        m_program->enableAttributeArray(0);
+
+        glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+        m_program->setUniformValue("t", (float)m_t);
+
+        glViewport(0, 0, m_viewportSize.width(), m_viewportSize.height());
+
+        glDisable(GL_DEPTH_TEST);
+
+        if (m_texture != NULL) {
+            m_texture->bind();
+        }
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        m_program->disableAttributeArray(0);
+        m_program->release();
+
+        m_window->resetOpenGLState();
+
+        m_window->endExternalCommands();
+    }
+
+   private:
+    QSize m_viewportSize;
+    qreal m_t;
+    QOpenGLShaderProgram *m_program;
+    QQuickWindow *m_window;
+    QImage *m_image;
+    QOpenGLTexture *m_texture = NULL;
+};
+
+class CleanupJob : public QRunnable {
+   public:
+    CleanupJob(TextureCanvasRenderer *renderer) : m_renderer(renderer) {
+    }
+    void run() override {
+        delete m_renderer;
+    }
+
+   private:
+    TextureCanvasRenderer *m_renderer;
+};
+
+class TextureCanvas : public QQuickItem {
+    Q_OBJECT
+    Q_PROPERTY(qreal t READ t WRITE setT NOTIFY tChanged)
+    QML_ELEMENT
+
+   public:
+    TextureCanvas::TextureCanvas() : m_t(0), m_renderer(nullptr) {
+        connect(this, &QQuickItem::windowChanged, this, &TextureCanvas::handleWindowChanged);
+    }
+
+    qreal t() const {
+        return m_t;
+    }
+    void setT(qreal t) {
+        if (t == m_t) return;
+        m_t = t;
+        emit tChanged();
+        if (window()) window()->update();
     }
 
    signals:
-    void textureUpdated();
+    void tChanged();
+
+   public slots:
+    void sync() {
+        if (!m_renderer) {
+            m_renderer = new TextureCanvasRenderer();
+            connect(window(), &QQuickWindow::beforeRendering, m_renderer,
+                    &TextureCanvasRenderer::init, Qt::DirectConnection);
+            connect(window(), &QQuickWindow::beforeRenderPassRecording, m_renderer,
+                    &TextureCanvasRenderer::paint, Qt::DirectConnection);
+        }
+        m_renderer->setViewportSize(window()->size() * window()->devicePixelRatio());
+        m_renderer->setT(m_t);
+        m_renderer->setWindow(window());
+    }
+    void cleanup() {
+        delete m_renderer;
+        m_renderer = nullptr;
+    }
+
+   private slots:
+    void handleWindowChanged(QQuickWindow *win) {
+        if (win) {
+            connect(win, &QQuickWindow::beforeSynchronizing, this, &TextureCanvas::sync,
+                    Qt::DirectConnection);
+            connect(win, &QQuickWindow::sceneGraphInvalidated, this, &TextureCanvas::cleanup,
+                    Qt::DirectConnection);
+            win->setColor(Qt::black);
+        }
+    }
 
    private:
-    QImage m_image;
+    void releaseResources() {
+        window()->scheduleRenderJob(new CleanupJob(m_renderer),
+                                    QQuickWindow::BeforeSynchronizingStage);
+        m_renderer = nullptr;
+    }
+
+    qreal m_t;
+    TextureCanvasRenderer *m_renderer;
 };
 
 int main(int argc, char **argv) {
     QApplication app(argc, argv);
 
-    TextureProvider textureProvider;
-
     QQmlApplicationEngine engine;
 
-    engine.rootContext()->setContextProperty("textureProvider", &textureProvider);
-    engine.addImageProvider(QLatin1String("canvastexture"), &textureProvider);
-
-    /*QImage exampleImage(700, 700, QImage::Format_RGB32);
-    exampleImage.fill(Qt::red);
-    textureProvider.updateTexture(exampleImage);*/
-
-    QByteArray byteArray;
-    byteArray.resize(700 * 700 * 4);
-
-    for (int y = 0; y < 700; ++y) {
-        for (int x = 0; x < 700; ++x) {
-            int index = (y * 700 + x) * 4;
-            byteArray[index + 0] = 0;
-            byteArray[index + 1] = 255;
-            byteArray[index + 2] = 255;
-            byteArray[index + 3] = 255;
-        }
-    }
-    textureProvider.updateTextureFromBytes(byteArray, 700, 700);
-
-    QTimer::singleShot(1000, [&textureProvider]() {
-        QImage exampleImage2(700, 700, QImage::Format_RGB32);
-        exampleImage2.fill(Qt::green);
-        textureProvider.updateTexture(exampleImage2);
-    });
+    qmlRegisterType<TextureCanvas>("CustomComponents", 1, 0, "TextureCanvas");
 
     engine.load(QUrl(QStringLiteral("qrc:/main.qml")));
     return app.exec();
