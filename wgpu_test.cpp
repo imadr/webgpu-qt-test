@@ -1,10 +1,9 @@
-#include <iostream>
-#include <fstream>
-#include <sstream>
-#include <iomanip>
-#include <string>
 #include <cassert>
 #include <chrono>
+#include <fstream>
+#include <iomanip>
+#include <iostream>
+#include <sstream>
 #include <string>
 
 #include "imgui/imgui/imgui.h"
@@ -14,8 +13,8 @@
 using namespace wgpu;
 
 struct GPU {
-    Instance instance; // XXX could avoid and use adapter.GetInstance()
-    Adapter adapter; // XXX could avoid and use device.GetAdapter()
+    Instance instance;  // XXX could avoid and use adapter.GetInstance()
+    Adapter adapter;    // XXX could avoid and use device.GetAdapter()
     Device device;
 
     void release() {
@@ -36,27 +35,28 @@ struct GPU {
         .compatibilityMode = false,
     };
     FutureWaitInfo adapter_future;
-    adapter_future.future = gpu.instance.RequestAdapter(&options, CallbackMode::WaitAnyOnly,
-        [&gpu] (RequestAdapterStatus status, Adapter adapter, char const* message) {
+    adapter_future.future = gpu.instance.RequestAdapter(
+        &options, CallbackMode::WaitAnyOnly,
+        [&gpu](RequestAdapterStatus status, Adapter adapter, char const* message) {
             assert(status == RequestAdapterStatus::Success);
             gpu.adapter = adapter;
-    });
+        });
 
     auto status = gpu.instance.WaitAny(1, &adapter_future, 0);
     if (status == WaitStatus::Success && adapter_future.completed) {
         DeviceDescriptor options;
         options.deviceLostCallbackInfo = {
-                .callback = [](WGPUDevice const * device, WGPUDeviceLostReason reason, char const * message, void *) {
-                    std::cout << "Device Lost: " << message << "\n";
-                },
+            .callback = [](WGPUDevice const* device, WGPUDeviceLostReason reason,
+                           char const* message,
+                           void*) { std::cout << "Device Lost: " << message << "\n"; },
         };
         options.uncapturedErrorCallbackInfo = {
-                .callback = [](WGPUErrorType type, char const * message, void *) {
-                    std::cout << "Error: " << message << "\n";
-                },
+            .callback = [](WGPUErrorType type, char const* message,
+                           void*) { std::cout << "Error: " << message << "\n"; },
         };
         FutureWaitInfo device_future;
-        device_future.future = gpu.adapter.RequestDevice(&options, CallbackMode::WaitAnyOnly,
+        device_future.future = gpu.adapter.RequestDevice(
+            &options, CallbackMode::WaitAnyOnly,
             [&gpu](RequestDeviceStatus status, Device device, char const* msg) {
                 assert(status == RequestDeviceStatus::Success);
                 gpu.device = device;
@@ -83,175 +83,179 @@ static const char shader_code[] = R"WGSL(
     }
 )WGSL";
 
+int webgpu_main() {
+    auto gpu = init_webgpu();
 
-int test_main_replace() {
+    ImGuiWebGPU imgui(gpu.device);
 
-    // auto gpu = init_webgpu();
+    ShaderModuleWGSLDescriptor wgsl_desc;
+    wgsl_desc.code = shader_code;
 
-    // ImGuiWebGPU imgui(gpu.device);
+    ShaderModuleDescriptor shader_desc{
+        .nextInChain = &wgsl_desc,
+    };
 
-    // ShaderModuleWGSLDescriptor wgsl_desc;
-    // wgsl_desc.code = shader_code;
+    ShaderModule shader_module = gpu.device.CreateShaderModule(&shader_desc);
 
-    // ShaderModuleDescriptor shader_desc{
-    //     .nextInChain = &wgsl_desc,
-    // };
+    ColorTargetState color_target_state{.format = TextureFormat::BGRA8Unorm};
 
-    // ShaderModule shader_module = gpu.device.CreateShaderModule(&shader_desc);
+    FragmentState fragment_state{
+        .module = shader_module, .targetCount = 1, .targets = &color_target_state};
 
-    // ColorTargetState color_target_state{
-    //     .format = TextureFormat::BGRA8Unorm
-    // };
+    RenderPipelineDescriptor descriptor{.vertex = {.module = shader_module},
+                                        .fragment = &fragment_state};
+    RenderPipeline pipeline = gpu.device.CreateRenderPipeline(&descriptor);
 
-    // FragmentState fragment_state{
-    //     .module = shader_module,
-    //     .targetCount = 1,
-    //     .targets = &color_target_state
-    // };
+    uint32_t width, height;
 
-    // RenderPipelineDescriptor descriptor{
-    //     .vertex = { .module = shader_module },
-    //     .fragment = &fragment_state
-    // };
-    // RenderPipeline pipeline = gpu.device.CreateRenderPipeline(&descriptor);
+    TextureDescriptor textureDesc = {};
+    textureDesc.size = {width, height, 1};
+    textureDesc.usage = TextureUsage::RenderAttachment | TextureUsage::CopySrc;
+    textureDesc.format = TextureFormat::BGRA8Unorm;
+    Texture renderTexture = gpu.device.CreateTexture(&textureDesc);
 
-    // int width, height;
 
-    // TextureCapture capture(gpu.device);
+    TextureCapture capture(gpu.device);
 
-    // bool is_rendering = false;
-    // while (is_rendering) {
-    //     std::vector<CommandBuffer> commands;
+    bool is_rendering = false;
+    while (is_rendering) {
+        std::vector<CommandBuffer> commands;
 
-        // RenderPassColorAttachment attachment{
-        //     .view = surface_info.texture.CreateView(),
-        //     .loadOp = LoadOp::Clear,
-        //     .storeOp = StoreOp::Store
-        // };
+        TextureView renderTextureView = renderTexture.CreateView();
 
-        // RenderPassDescriptor render_pass{
-        //     .colorAttachmentCount = 1,
-        //     .colorAttachments = &attachment
-        // };
 
-        // CommandEncoder encoder = gpu.device.CreateCommandEncoder();
-        // RenderPassEncoder pass = encoder.BeginRenderPass(&render_pass);
-        // pass.SetPipeline(pipeline);
-        // pass.Draw(3);
-        // pass.End();
+        RenderPassColorAttachment attachment{.view = renderTextureView,
+                                             .loadOp = LoadOp::Clear,
+                                             .storeOp = StoreOp::Store};
 
-        // commands.push_back(encoder.Finish());
-        // gpu.device.GetQueue().Submit(commands.size(), commands.data());
+        RenderPassDescriptor render_pass{.colorAttachmentCount = 1,
+                                         .colorAttachments = &attachment};
 
-        // imgui.begin_frame(surface_info.texture.GetWidth(), surface_info.texture.GetHeight());
+        CommandEncoder encoder = gpu.device.CreateCommandEncoder();
+        RenderPassEncoder pass = encoder.BeginRenderPass(&render_pass);
+        pass.SetPipeline(pipeline);
+        pass.Draw(3);
+        pass.End();
 
-        // // simple fps counter
-        // static int frame_count = 0;
-        // static auto prev = std::chrono::high_resolution_clock::now();
-        // static float mean_fps = 0.0;
-        // if (frame_count >= 60) {
-        //     auto now = std::chrono::high_resolution_clock::now();
-        //     std::chrono::duration<double, std::micro> mean_us = now - prev;
-        //     mean_fps = float(frame_count) / (mean_us.count() * 1e-6);
-        //     prev = now;
-        //     frame_count = 1;
-        // } else {
-        //     frame_count++;
-        // }
+        commands.push_back(encoder.Finish());
+        gpu.device.GetQueue().Submit(commands.size(), commands.data());
+        
+        imgui.begin_frame(renderTexture.GetWidth(), renderTexture.GetHeight());
 
-        // ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
-        // window_flags |= ImGuiWindowFlags_NoMove;
+        // simple fps counter
+        static int frame_count = 0;
+        static auto prev = std::chrono::high_resolution_clock::now();
+        static float mean_fps = 0.0;
+        if (frame_count >= 60) {
+            auto now = std::chrono::high_resolution_clock::now();
+            std::chrono::duration<double, std::micro> mean_us = now - prev;
+            mean_fps = float(frame_count) / (mean_us.count() * 1e-6);
+            prev = now;
+            frame_count = 1;
+        } else {
+            frame_count++;
+        }
 
-        // const float PAD = 10.0f;
-        // const ImGuiViewport* viewport = ImGui::GetMainViewport();
-        // ImVec2 work_pos = viewport->WorkPos; // Use work area to avoid menu-bar/task-bar, if any!
-        // ImVec2 work_size = viewport->WorkSize;
-        // ImVec2 window_pos, window_pos_pivot;
-        // window_pos.x = work_pos.x + PAD;
-        // window_pos.y = work_pos.y + PAD;
-        // window_pos_pivot.x = 0.0f;
-        // window_pos_pivot.y = 0.0f;
-        // ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
+        ImGuiWindowFlags window_flags =
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoNav;
+        window_flags |= ImGuiWindowFlags_NoMove;
 
-        // static std::stringstream capture_file_name;
-        // static int capture_seq = 0;
-        // static int capture_frame = 0;
-        // static bool do_capture = false;
-        // static bool capture_include_ui = false;
-        // if (ImGui::Begin("Example: Simple overlay", nullptr, window_flags)) {
-        //     ImGui::Text("[F1] Open/Close demo window");
-        //     ImGui::Text("Fps: %.1f", mean_fps);
-        //     const char * capture_btn_labels[2] = { "Screen capture", "Stop capture" };
-        //     const ImVec4 capture_btn_colors[2] = { ImGui::GetStyleColorVec4(ImGuiCol_Button), (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f) };
-        //     const ImVec4 capture_btn_hovered_colors[2] = { ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered), (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.8f) };
-        //     const ImVec4 capture_btn_active_colors[2] = { ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive), (ImVec4)ImColor::HSV(0.0f, 0.6f, 1.0f) };
-        //     ImGui::PushStyleColor(ImGuiCol_Button, capture_btn_colors[do_capture]);
-        //     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, capture_btn_hovered_colors[do_capture]);
-        //     ImGui::PushStyleColor(ImGuiCol_ButtonActive, capture_btn_active_colors[do_capture]);
-        //     if (ImGui::Button(capture_btn_labels[do_capture])) {
-        //         do_capture = !do_capture;
-        //         if (do_capture) {
-        //             capture_seq = (capture_seq + 1) % 100;
-        //             capture_frame = 0;
-        //         }
-        //     }
-        //     ImGui::PopStyleColor(3);
-        //     ImGui::SameLine();
-        //     ImGui::Checkbox("/w UI", &capture_include_ui);
+        const float PAD = 10.0f;
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        ImVec2 work_pos = viewport->WorkPos;  // Use work area to avoid menu-bar/task-bar, if any!
+        ImVec2 work_size = viewport->WorkSize;
+        ImVec2 window_pos, window_pos_pivot;
+        window_pos.x = work_pos.x + PAD;
+        window_pos.y = work_pos.y + PAD;
+        window_pos_pivot.x = 0.0f;
+        window_pos_pivot.y = 0.0f;
+        ImGui::SetNextWindowPos(window_pos, ImGuiCond_Always, window_pos_pivot);
 
-        //     if (do_capture) {
-        //         capture_file_name.str("");
-        //         capture_file_name << "capture_s" << std::setfill('0') << std::setw(2) << capture_seq
-        //             << "_" << std::setw(5) << capture_frame << ".ppm";
-        //         ImGui::Text("%s", capture_file_name.str().c_str());
-        //         capture_frame = (capture_frame + 1) % 10000;
-        //     }
-        // }
-        // ImGui::End();
+        static std::stringstream capture_file_name;
+        static int capture_seq = 0;
+        static int capture_frame = 0;
+        static bool do_capture = false;
+        static bool capture_include_ui = false;
+        if (ImGui::Begin("Example: Simple overlay", nullptr, window_flags)) {
+            ImGui::Text("[F1] Open/Close demo window");
+            ImGui::Text("Fps: %.1f", mean_fps);
+            const char* capture_btn_labels[2] = {"Screen capture", "Stop capture"};
+            const ImVec4 capture_btn_colors[2] = {ImGui::GetStyleColorVec4(ImGuiCol_Button),
+                                                  (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.6f)};
+            const ImVec4 capture_btn_hovered_colors[2] = {
+                ImGui::GetStyleColorVec4(ImGuiCol_ButtonHovered),
+                (ImVec4)ImColor::HSV(0.0f, 0.6f, 0.8f)};
+            const ImVec4 capture_btn_active_colors[2] = {
+                ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive),
+                (ImVec4)ImColor::HSV(0.0f, 0.6f, 1.0f)};
+            ImGui::PushStyleColor(ImGuiCol_Button, capture_btn_colors[do_capture]);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, capture_btn_hovered_colors[do_capture]);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, capture_btn_active_colors[do_capture]);
+            if (ImGui::Button(capture_btn_labels[do_capture])) {
+                do_capture = !do_capture;
+                if (do_capture) {
+                    capture_seq = (capture_seq + 1) % 100;
+                    capture_frame = 0;
+                }
+            }
+            ImGui::PopStyleColor(3);
+            ImGui::SameLine();
+            ImGui::Checkbox("/w UI", &capture_include_ui);
 
-        // if (show_imgui_demo) {
-        //     ImGui::ShowDemoWindow(&show_imgui_demo);
-        // }
+            if (do_capture) {
+                capture_file_name.str("");
+                capture_file_name << "capture_s" << std::setfill('0') << std::setw(2) << capture_seq
+                                  << "_" << std::setw(5) << capture_frame << ".ppm";
+                ImGui::Text("%s", capture_file_name.str().c_str());
+                capture_frame = (capture_frame + 1) % 10000;
+            }
+        }
+        ImGui::End();
 
-        // if (capture_include_ui) {
-        //     imgui.end_frame(surface_info.texture);
-        // }
+        if (show_imgui_demo) {
+            ImGui::ShowDemoWindow(&show_imgui_demo);
+        }
 
-        // if (do_capture) {
-        //     std::string file_name = capture_file_name.str();
-        //     capture.push(surface_info.texture, nullptr,
-        //         [file_name](char const * image_data, ImageDataLayout const& layout) {
-        //         std::ofstream file(file_name);
-        //         file << "P6\n" << layout.width << " " << layout.height << "\n" << 255 << "\n";
-        //         for (int row = 0; row <layout.height; row++) {
-        //                 char const * pixel = image_data + row * layout.row_stride;
-        //                 for (int col = 0; col <layout.width; col++, pixel += 4) {
-        //                     if (layout.format == TextureFormat::BGRA8Unorm) {
-        //                         char rgb[3] = { *(pixel + 2), *(pixel + 1), *pixel };
-        //                         file.write(rgb, 3);
-        //                     } else {
-        //                         file.write(pixel, 3);
-        //                     }
-        //             }
-        //         }
-        //     });
-        // }
+        if (capture_include_ui) {
+            imgui.end_frame(renderTexture);
+        }
 
-        // if (!capture_include_ui) {
-        //     imgui.end_frame(surface_info.texture);
-        // }
+        if (do_capture) {
+            std::string file_name = capture_file_name.str();
+            capture.push(
+                renderTexture, nullptr,
+                [file_name](char const* image_data, ImageDataLayout const& layout) {
+                    std::ofstream file(file_name);
+                    file << "P6\n" << layout.width << " " << layout.height << "\n" << 255 << "\n";
+                    for (int row = 0; row < layout.height; row++) {
+                        char const* pixel = image_data + row * layout.row_stride;
+                        for (int col = 0; col < layout.width; col++, pixel += 4) {
+                            if (layout.format == TextureFormat::BGRA8Unorm) {
+                                char rgb[3] = {*(pixel + 2), *(pixel + 1), *pixel};
+                                file.write(rgb, 3);
+                            } else {
+                                file.write(pixel, 3);
+                            }
+                        }
+                    }
+                });
+        }
 
-        // surface.Present();
+        if (!capture_include_ui) {
+            imgui.end_frame(renderTexture);
+        }
 
-        // // Poll for and process events
-        // gpu.instance.ProcessEvents();
+        // Poll for and process events
+        gpu.instance.ProcessEvents();
 
-        // if (do_capture) {
-        //     capture.pop();
-        // }
-    // }
+        if (do_capture) {
+            capture.pop();
+        }
+    }
 
-    // gpu.release();
+    gpu.release();
 
     return 0;
 }

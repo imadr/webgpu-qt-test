@@ -15,6 +15,7 @@
 #include <QtGui/QOpenGLContext>
 #include <QtGui/QOpenGLShaderProgram>
 #include <QtGui/QOpenGLTexture>
+#include <QPainter>
 
 class TextureCanvasRenderer : public QObject, protected QOpenGLFunctions {
     Q_OBJECT
@@ -77,8 +78,14 @@ class TextureCanvasRenderer : public QObject, protected QOpenGLFunctions {
 
             m_program->link();
 
-            m_image = new QImage(256, 256, QImage::Format_RGBA8888);
+            m_image = new QImage(100, 100, QImage::Format_RGBA8888);
             m_image->fill(Qt::red);
+            QPainter painter(m_image);
+            painter.setPen(Qt::blue);
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRect(25, 25, 50, 50);
+            painter.end();
+
             updateTextureData();
         }
     }
