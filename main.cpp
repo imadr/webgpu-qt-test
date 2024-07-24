@@ -137,7 +137,7 @@ class TextureCanvas : public QQuickItem {
     QML_ELEMENT
 
    public:
-    TextureCanvas::TextureCanvas() : m_t(0), m_renderer(nullptr) {
+    TextureCanvas() : m_t(0), m_renderer(nullptr) {
         connect(this, &QQuickItem::windowChanged, this, &TextureCanvas::handleWindowChanged);
     }
 
