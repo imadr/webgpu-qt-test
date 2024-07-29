@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-#include "imgui/imgui/imgui.h"
+#include <imgui/imgui.h>
 #include <webgpu/webgpu_cpp.h>
 
 class ImGuiWebGPU {
